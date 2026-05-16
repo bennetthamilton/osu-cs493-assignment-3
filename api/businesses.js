@@ -4,6 +4,7 @@ const { ValidationError } = require('sequelize')
 const { Business, BusinessClientFields } = require('../models/business')
 const { Photo } = require('../models/photo')
 const { Review } = require('../models/review')
+const { requireAuthentication, userIsAuthorized } = require('../lib/auth')
 
 const router = Router()
 
@@ -11,10 +12,6 @@ const router = Router()
  * Route to return a list of businesses.
  */
 router.get('/', async function (req, res) {
-  /*
-   * Compute page number based on optional query string parameter `page`.
-   * Make sure page is within allowed bounds.
-   */
   let page = parseInt(req.query.page) || 1
   page = page < 1 ? 1 : page
   const numPerPage = 10
@@ -25,9 +22,6 @@ router.get('/', async function (req, res) {
     offset: offset
   })
 
-  /*
-   * Generate HATEOAS links for surrounding pages.
-   */
   const lastPage = Math.ceil(result.count / numPerPage)
   const links = {}
   if (page < lastPage) {
@@ -39,9 +33,6 @@ router.get('/', async function (req, res) {
     links.firstPage = '/businesses?page=1'
   }
 
-  /*
-   * Construct and send response.
-   */
   res.status(200).json({
     businesses: result.rows,
     pageNumber: page,
@@ -55,15 +46,19 @@ router.get('/', async function (req, res) {
 /*
  * Route to create a new business.
  */
-router.post('/', async function (req, res, next) {
+router.post('/', requireAuthentication, async function (req, res, next) {
+  if (!userIsAuthorized(req, req.body.ownerId)) {
+    return res.status(403).send({ error: 'Forbidden' })
+  }
+
   try {
-    const business = await Business.create(req.body, BusinessClientFields)
+    const business = await Business.create(req.body, { fields: BusinessClientFields })
     res.status(201).send({ id: business.id })
   } catch (e) {
     if (e instanceof ValidationError) {
       res.status(400).send({ error: e.message })
     } else {
-      throw e
+      next(e)
     }
   }
 })
@@ -86,11 +81,20 @@ router.get('/:businessId', async function (req, res, next) {
 /*
  * Route to update data for a business.
  */
-router.patch('/:businessId', async function (req, res, next) {
+router.patch('/:businessId', requireAuthentication, async function (req, res, next) {
   const businessId = req.params.businessId
+  const business = await Business.findByPk(businessId)
+
+  if (!business) {
+    return next()
+  }
+  if (!userIsAuthorized(req, business.ownerId)) {
+    return res.status(403).send({ error: 'Forbidden' })
+  }
+
   const result = await Business.update(req.body, {
     where: { id: businessId },
-    fields: BusinessClientFields
+    fields: BusinessClientFields.filter(field => field !== 'ownerId')
   })
   if (result[0] > 0) {
     res.status(204).send()
@@ -102,8 +106,17 @@ router.patch('/:businessId', async function (req, res, next) {
 /*
  * Route to delete a business.
  */
-router.delete('/:businessId', async function (req, res, next) {
+router.delete('/:businessId', requireAuthentication, async function (req, res, next) {
   const businessId = req.params.businessId
+  const business = await Business.findByPk(businessId)
+
+  if (!business) {
+    return next()
+  }
+  if (!userIsAuthorized(req, business.ownerId)) {
+    return res.status(403).send({ error: 'Forbidden' })
+  }
+
   const result = await Business.destroy({ where: { id: businessId }})
   if (result > 0) {
     res.status(204).send()
