@@ -7,19 +7,11 @@ const sequelize = require('./lib/sequelize')
 const app = express()
 const port = process.env.PORT || 8000
 
-/*
- * Morgan is a popular logger.
- */
 app.use(morgan('dev'))
 
 app.use(express.json())
 app.use(express.static('public'))
 
-/*
- * All routes for the API are written in modules in the api/ directory.  The
- * top-level router lives in api/index.js.  That's what we include here, and
- * it provides all of the routes.
- */
 app.use('/', api)
 
 app.use('*', function (req, res, next) {
@@ -28,19 +20,36 @@ app.use('*', function (req, res, next) {
   })
 })
 
-/*
- * This route will catch any errors thrown from our API endpoints and return
- * a response with a 500 status to the client.
- */
 app.use('*', function (err, req, res, next) {
   console.error("== Error:", err)
   res.status(500).send({
-      error: "Server error.  Please try again later."
+    error: "Server error.  Please try again later."
   })
 })
 
-sequelize.sync().then(function () {
-  app.listen(port, function () {
-      console.log("== Server is listening on port:", port)
-  })
-})
+async function startServer() {
+  let retries = 10
+
+  while (retries > 0) {
+    try {
+      await sequelize.authenticate()
+      console.log("== Database connection established")
+
+      await sequelize.sync()
+
+      app.listen(port, function () {
+        console.log("== Server is listening on port:", port)
+      })
+
+      return
+    } catch (err) {
+      retries--
+      console.log("== Database not ready, retrying...")
+      await new Promise(resolve => setTimeout(resolve, 5000))
+    }
+  }
+
+  throw new Error("Could not connect to database")
+}
+
+startServer()
